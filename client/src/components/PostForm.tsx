@@ -1,5 +1,4 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
@@ -18,7 +17,29 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledDate, setScheduledDate] = useState('');
   const [isPosting, setIsPosting] = useState(false);
+  const [showAICaptions, setShowAICaptions] = useState(true);
+  const [connections, setConnections] = useState<{ [key: string]: boolean }>({ Twitter: false, LinkedIn: false });
   const { toast } = useToast();
+
+  // Fetch connection status from backend
+  useEffect(() => {
+    const fetchConnections = async () => {
+      try {
+        const twitterRes = await fetch('/api/status/twitter');
+        const linkedinRes = await fetch('/api/status/linkedin');
+        const twitter = await twitterRes.json();
+        const linkedin = await linkedinRes.json();
+        setConnections({
+          Twitter: twitter.connected,
+          LinkedIn: linkedin.connected
+        });
+      } catch (e) {
+        // fallback: assume not connected
+        setConnections({ Twitter: false, LinkedIn: false });
+      }
+    };
+    fetchConnections();
+  }, []);
 
   const platforms = [
     { name: 'Twitter', icon: Twitter, color: 'text-blue-500' },
@@ -28,8 +49,8 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
   ];
 
   const togglePlatform = (platform: string) => {
-    setSelectedPlatforms(prev => 
-      prev.includes(platform) 
+    setSelectedPlatforms(prev =>
+      prev.includes(platform)
         ? prev.filter(p => p !== platform)
         : [...prev, platform]
     );
@@ -53,13 +74,20 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
       });
       return;
     }
-
+    // Only allow posting to connected platforms
+    const notConnected = selectedPlatforms.filter(p => connections[p] === false && (p === 'Twitter' || p === 'LinkedIn'));
+    if (notConnected.length > 0) {
+      toast({
+        title: "Account Not Connected",
+        description: `Please connect your ${notConnected.join(', ')} account(s) before posting.`,
+        variant: "destructive"
+      });
+      return;
+    }
     setIsPosting(true);
-
     try {
       // Simulate API call to post to selected platforms
       await new Promise(resolve => setTimeout(resolve, 2000));
-
       const newPost: Post = {
         id: Date.now().toString(),
         content,
@@ -69,15 +97,11 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
         status: isScheduled ? 'scheduled' : 'posted',
         createdAt: new Date()
       };
-
       onPostCreated(newPost);
-
       toast({
         title: isScheduled ? "Post Scheduled!" : "Post Published!",
         description: `Successfully ${isScheduled ? 'scheduled' : 'posted'} to ${selectedPlatforms.join(', ')}`
       });
-
-      // Reset form
       setContent('');
       setSelectedPlatforms([]);
       setImage(null);
@@ -94,21 +118,63 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
     }
   };
 
-  const useGeneratedCaption = (caption: string) => {
+  // --- OAuth Connect Handlers ---
+  const handleConnect = (platform: string) => {
+    // Redirect to backend OAuth endpoint for the selected platform
+    if (platform === 'Twitter') {
+      window.location.href = 'http://localhost:3000/auth/twitter';
+    } else if (platform === 'LinkedIn') {
+      window.location.href = 'http://localhost:3000/auth/linkedin';
+    }
+  };
+
+  // --- AI Caption Selection ---
+  const handleGeneratedCaptionClick = (caption: string) => {
     setContent(caption);
   };
 
   return (
     <div className="space-y-6">
+      {/* Connect Accounts Section */}
+      <div className="flex items-center space-x-4 mb-2">
+        <span className="font-medium text-slate-700">Connect your accounts:</span>
+        <Button
+          variant={connections.Twitter ? 'secondary' : 'default'}
+          onClick={() => handleConnect('Twitter')}
+          disabled={connections.Twitter}
+        >
+          {connections.Twitter ? 'Twitter Connected' : 'Connect Twitter'}
+        </Button>
+        <Button
+          variant={connections.LinkedIn ? 'secondary' : 'default'}
+          onClick={() => handleConnect('LinkedIn')}
+          disabled={connections.LinkedIn}
+        >
+          {connections.LinkedIn ? 'LinkedIn Connected' : 'Connect LinkedIn'}
+        </Button>
+      </div>
+
+      {/* AI Caption Toggle */}
+      <div className="flex items-center space-x-2">
+        <input
+          type="checkbox"
+          checked={showAICaptions}
+          onChange={() => setShowAICaptions(v => !v)}
+          id="show-ai-captions"
+        />
+        <label htmlFor="show-ai-captions">Show AI-generated captions</label>
+      </div>
+
       {/* Generated Captions */}
-      {generatedCaptions.length > 0 && (
+      {showAICaptions && generatedCaptions.length > 0 && (
         <div className="space-y-3">
           <h4 className="font-medium text-slate-700">✨ Generated Captions</h4>
           <div className="grid gap-2">
             {generatedCaptions.map((caption, index) => (
               <button
                 key={index}
-                onClick={() => useGeneratedCaption(caption)}
+                type="button"
+                onClick={() => handleGeneratedCaptionClick(caption)}
                 className="text-left p-3 text-sm bg-gradient-to-r from-purple-50 to-blue-50 hover:from-purple-100 hover:to-blue-100 rounded-lg border border-purple-200/50 transition-all duration-200"
               >
                 {caption}
@@ -165,7 +231,8 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
                 selectedPlatforms.includes(platform.name)
                   ? 'border-purple-300 bg-purple-50'
                   : 'border-slate-200 hover:border-slate-300'
-              }`}
+              } ${!(platform.name in connections) || connections[platform.name] || (platform.name !== 'Twitter' && platform.name !== 'LinkedIn') ? '' : 'opacity-50 cursor-not-allowed'}`}
+              disabled={(platform.name === 'Twitter' || platform.name === 'LinkedIn') && !connections[platform.name]}
             >
               <platform.icon className={`w-5 h-5 mx-auto mb-1 ${platform.color}`} />
               <span className="text-xs font-medium">{platform.name}</span>

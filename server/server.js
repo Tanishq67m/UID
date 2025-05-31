@@ -1,23 +1,75 @@
 // server.js or index.js
 
 require('dotenv').config();
+console.log('TWITTER_CLIENT_ID:', process.env.TWITTER_CLIENT_ID);
+console.log('TWITTER_REDIRECT_URI:', process.env.TWITTER_REDIRECT_URI);
+
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
 const OpenAI = require('openai');
+const querystring = require('querystring');
+const pkceChallenge = require('pkce-challenge').default;
 
 const app = express();
 
 // CORS configuration for frontend on port 8080
 app.use(cors({
   origin: 'http://localhost:8080',
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204,
-  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
+
+// --- In-memory user store (for demo; use DB in production) ---
+const userTokens = {};
+
+const pkceStore = {}; // In-memory for demo
+
+// --- LinkedIn Manual OAuth ---
+app.get('/auth/linkedin', (req, res) => {
+  const authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.LINKEDIN_REDIRECT_URI)}&scope=r_liteprofile%20r_emailaddress%20w_member_social`;
+  res.redirect(authUrl);
+});
+
+app.get('/auth/linkedin/callback', async (req, res) => {
+  const { code } = req.query;
+  console.log('LinkedIn callback code:', code);
+  try {
+    const tokenRes = await axios.post(
+      'https://api.twitter.com/2/oauth2/token',
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.TWITTER_REDIRECT_URI,
+        client_id: process.env.TWITTER_CLIENT_ID,
+        code_verifier,
+      }),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }
+    );
+    
+    const accessToken = tokenRes.data.access_token;
+    // For demo, store in memory (replace with DB in production)
+    userTokens['demo_user'] = { linkedin: { accessToken } };
+    res.send('LinkedIn connected!');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('LinkedIn OAuth failed');
+  }
+});
+
+// --- Connection status endpoint ---
+app.get('/api/status/linkedin', (req, res) => {
+  res.json({ connected: !!(userTokens['demo_user'] && userTokens['demo_user'].linkedin) });
+});
+
+// --- Example protected route (optional) ---
+app.get('/api/me', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ user: req.user });
+});
 
 // GitHub AI model configuration
 if (!process.env.GITHUB_TOKEN) {
@@ -85,7 +137,7 @@ app.post('/api/generate-caption', async (req, res) => {
       .filter(line => line.trim()) // Remove empty lines
       .slice(0, 5) // Take only first 5 captions
       .map(caption => caption
-        .replace(/^\d+[\)\.]\s*/, '') // Remove numbering
+        .replace(/^\d+[)\.]\s*/, '') // Remove numbering
         .trim()
       );
 
@@ -108,6 +160,75 @@ app.post('/api/generate-caption', async (req, res) => {
       warning: 'Used fallback captions due to API error'
     });
   }
+});
+
+// --- Twitter Manual OAuth 2.0 Authorization Code Flow ---
+app.get('/auth/twitter', (req, res) => {
+  const pkce = pkceChallenge(); // returns { code_verifier, code_challenge }
+
+  const code_verifier = pkce.code_verifier;
+  const code_challenge = pkce.code_challenge;
+
+  pkceStore['demo_user'] = code_verifier;
+
+  const params = querystring.stringify({
+    response_type: 'code',
+    client_id: process.env.TWITTER_CLIENT_ID,
+    redirect_uri: process.env.TWITTER_REDIRECT_URI,
+    scope: 'tweet.read tweet.write users.read offline.access',
+    state: 'state',
+    code_challenge,
+    code_challenge_method: 'S256',
+  });
+
+  const authUrl = `https://twitter.com/i/oauth2/authorize?${params}`;
+  console.log('Twitter Auth URL:', authUrl);
+  console.log('Verifier:', code_verifier);
+  console.log('Challenge:', code_challenge);
+
+  res.redirect(authUrl);
+});
+
+
+
+
+app.get('/auth/twitter/callback', async (req, res) => {
+  const { code } = req.query;
+  const code_verifier = pkceStore['demo_user'];
+
+  try {
+    const tokenRes = await axios.post(
+      'https://api.twitter.com/2/oauth2/token',
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.TWITTER_REDIRECT_URI,
+        client_id: process.env.TWITTER_CLIENT_ID,
+        code_verifier,
+      }),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }
+    );
+
+    const accessToken = tokenRes.data.access_token;
+
+    userTokens['demo_user'] = {
+      ...userTokens['demo_user'],
+      twitter: { accessToken },
+    };
+
+    res.redirect('http://localhost:8080');
+  } catch (err) {
+    console.error(err.response?.data || err);
+    res.status(500).send('Twitter OAuth failed');
+  }
+});
+
+
+// --- Twitter connection status endpoint ---
+app.get('/api/status/twitter', (req, res) => {
+  res.json({ connected: !!(userTokens['demo_user'] && userTokens['demo_user'].twitter) });
 });
 
 const PORT = process.env.PORT || 3000;
