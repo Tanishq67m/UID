@@ -124,7 +124,7 @@ const PostForm = ({ onPostCreated, generatedCaptions }: PostFormProps) => {
     if (platform === 'Twitter') {
       window.location.href = 'http://localhost:3000/auth/twitter';
     } else if (platform === 'LinkedIn') {
-      window.location.href = 'http://localhost:3000/auth/linkedin';
+      window.location.href = 'http://localhost:3000/auth/linkedin/login';
     }
   };
 
