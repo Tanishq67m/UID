@@ -19,7 +19,7 @@
 
 ### 1. Clone the repository
 ```sh
-git clone <YOUR_GIT_URL>
+git clone https://github.com/Tanishq67m/UID.git
 cd captivate-compose-connect
 ```
 
@@ -84,8 +84,3 @@ npm run dev
 ## Technologies Used
 - React, Vite, TypeScript, Tailwind CSS, shadcn-ui (Client)
 - Node.js, Express, OpenAI, OAuth, Mongoose (Server)
-
----
-
-## License
-MIT 
